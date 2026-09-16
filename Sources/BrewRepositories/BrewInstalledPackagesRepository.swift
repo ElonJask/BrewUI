@@ -29,6 +29,9 @@ public final class BrewInstalledPackagesRepository: InstalledPackagesRepository 
 
     public private(set) var refreshFailure: (any Error)?
 
+    /// See ``InstalledInventoryObserving/fetchRevision``.
+    public private(set) var fetchRevision = 0
+
     /// O(1) membership/info lookups, kept in lock-step with ``state``. Tracked by observation so
     /// row views re-render when an install/uninstall changes a package's presence.
     private var lookup: [HomebrewPackageID: InstalledBrewPackage] = [:]
@@ -153,6 +156,7 @@ public final class BrewInstalledPackagesRepository: InstalledPackagesRepository 
     // MARK: - Fetch / state plumbing
 
     private func fetchAndStore() async {
+        defer { fetchRevision += 1 }
         do {
             let packages = try await fetchInstalledPackages()
             // Only a completed fetch clears this; repainting a cached snapshot answers nothing.

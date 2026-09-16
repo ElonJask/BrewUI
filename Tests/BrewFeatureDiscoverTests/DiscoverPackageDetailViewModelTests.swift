@@ -211,9 +211,88 @@ struct DiscoverPackageDetailViewModelTests {
         #expect(viewModel.stableVersionLabel == "4.0.0")
         #expect(viewModel.homepageURL?.absoluteString == "https://docker.com")
     }
+
+    @Test @MainActor func `releaseLatchedOperationState clears the install bridge once the install has ended`() async {
+        let center = InstallPhaseSequenceCommandCenter(phases: [.running(.installFormula), .idle])
+        let viewModel = makeDetailViewModel(center: center)
+        await viewModel.observeInstallUpdates()
+        #expect(viewModel.isInstalling)
+
+        viewModel.releaseLatchedOperationState()
+
+        #expect(!viewModel.isInstalling)
+    }
+
+    @Test @MainActor func `releaseLatchedOperationState keeps live busy state while the install runs`() async {
+        let center = InstallPhaseSequenceCommandCenter(phases: [.running(.installFormula)])
+        let viewModel = makeDetailViewModel(center: center)
+        await viewModel.observeInstallUpdates()
+        #expect(viewModel.isInstalling)
+
+        viewModel.releaseLatchedOperationState()
+
+        #expect(viewModel.isInstalling)
+    }
 }
 
 @MainActor
 private func installedRepo(_ packages: [InstalledBrewPackage] = []) -> StubInstalledPackagesRepository {
     StubInstalledPackagesRepository(packages: packages)
+}
+
+@MainActor
+private func makeDetailViewModel(
+    center: InstallPhaseSequenceCommandCenter,
+) -> DiscoverPackageDetailViewModel {
+    DiscoverPackageDetailViewModel(
+        package: DiscoveryBrewPackage(package: .fixture(name: "wget"), thirtyDayInstallCount: 0),
+        installedRepository: installedRepo(),
+        brewCommandCenter: center,
+        commandFactory: StubMutatingCommandFactory(),
+    )
+}
+
+/// Plays back a fixed phase timeline via `phaseChanges(for:)`, then finishes.
+private actor InstallPhaseSequenceCommandCenter: BrewCommandCenter {
+    private let phases: [BrewOperationPhase]
+
+    init(phases: [BrewOperationPhase]) {
+        self.phases = phases
+    }
+
+    func phase(for _: BrewOperationID) async -> BrewOperationPhase {
+        phases.last ?? .idle
+    }
+
+    func runningPhases() async -> [BrewOperationID: BrewOperationPhase] {
+        [:]
+    }
+
+    @discardableResult
+    func capture(_ command: BrewCommand, id: BrewOperationID) async throws -> CommandOutput {
+        _ = id
+        _ = command
+        return CommandOutput(standardOutput: "", standardError: "", terminationStatus: 0)
+    }
+
+    func perform(_ command: BrewCommand, id: BrewOperationID) async throws {
+        _ = try await capture(command, id: id)
+    }
+
+    func phaseChanges(for _: BrewOperationID) async -> AsyncStream<BrewOperationPhase> {
+        AsyncStream<BrewOperationPhase>(bufferingPolicy: .unbounded) { continuation in
+            for phase in phases {
+                continuation.yield(phase)
+            }
+            continuation.finish()
+        }
+    }
+
+    func allPhaseChanges() async -> AsyncStream<(BrewOperationID, BrewOperationPhase)> {
+        AsyncStream { $0.finish() }
+    }
+
+    func allOutputChanges() async -> AsyncStream<(BrewOperationID, BrewCommandOutputLine)> {
+        AsyncStream { $0.finish() }
+    }
 }

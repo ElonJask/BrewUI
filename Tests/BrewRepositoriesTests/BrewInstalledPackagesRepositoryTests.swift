@@ -467,6 +467,32 @@ struct BrewInstalledPackagesRepositoryTests {
 
         #expect(await runner.callCount == 1)
     }
+
+    @Test @MainActor func `fetch revision increments when a fetch succeeds`() async {
+        let runner = CountingInfoRunner()
+        let repo = InstalledPackagesTestSupport.repository(commandRunner: runner)
+        #expect(repo.fetchRevision == 0)
+
+        await repo.load(forceRefresh: true)
+
+        #expect(repo.fetchRevision == 1)
+    }
+
+    @Test @MainActor func `fetch revision increments when a fetch fails`() async {
+        // Busy latches release on this signal when a failed reconcile changed nothing.
+        let runner = MockBrewCommandRunner(
+            behaviors: [
+                ["info", "--installed", "--json=v2"]: .throw(BrewCommandError.failed(exitCode: 1, stderr: "boom")),
+            ],
+        )
+        let repo = InstalledPackagesTestSupport.repository(commandRunner: runner)
+        #expect(repo.fetchRevision == 0)
+
+        await repo.load(forceRefresh: true)
+
+        #expect(repo.fetchRevision == 1)
+        #expect(repo.refreshFailure != nil)
+    }
 }
 
 @MainActor

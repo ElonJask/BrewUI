@@ -40,6 +40,8 @@ struct BrewApp: App {
     private let configRepository: BrewConfigRepository
     private let crashReportController: CrashReportController
     private let selfUpgradeCoordinator: SelfUpgradeCoordinator
+    /// ``MainWindowScene/productionID`` in normal launches; a separate id under UI tests.
+    private let windowSceneID: String
     #if DEBUG
         private let selfUpgradeDebugControl = SelfUpgradeDebugControl()
     #endif
@@ -104,7 +106,7 @@ struct BrewApp: App {
             selfUpgradeCoordinator = Self.makeSelfUpgradeCoordinator(selfUpgradeContext)
         #endif
 
-        NSWindow.allowsAutomaticWindowTabbing = false
+        windowSceneID = MainWindowScene.configure(uiTesting: uiTesting != nil)
     }
 
     /// Cleared at launch, so a previous run's ETag or refresh timestamp cannot decide this run's fetches.
@@ -239,7 +241,10 @@ struct BrewApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        // One main window with a stable scene id so AppKit persists size and placement
+        // (`NSWindow Frame main`). `WindowGroup` would treat each launch as a new window
+        // and re-apply `.defaultSize` (issue #174).
+        Window("Homebrew", id: windowSceneID) {
             MainWindowView()
                 .environment(\.brewCommandCenter, commandCenter)
                 .environment(\.mutatingCommandFactory, commandFactory)
@@ -279,6 +284,8 @@ struct BrewApp: App {
             width: BrewLayout.defaultWindowWidth,
             height: BrewLayout.defaultWindowHeight,
         )
+        .defaultPosition(.center)
+        .windowResizability(.contentMinSize)
         .commands {
             SearchCommands()
             SidebarCommands()
@@ -297,6 +304,30 @@ struct BrewApp: App {
                 DebugMenuCommands(selfUpgradeControl: selfUpgradeDebugControl)
             }
         #endif
+    }
+}
+
+/// Stable `Window` identity plus AppKit frame-autosave cleanup for UI tests.
+private enum MainWindowScene {
+    static let productionID = "main"
+    static let uiTestingID = "main-ui-testing"
+
+    static func configure(uiTesting: Bool) -> String {
+        NSWindow.allowsAutomaticWindowTabbing = false
+        guard uiTesting else {
+            return productionID
+        }
+        clearSavedFrame(for: uiTestingID)
+        return uiTestingID
+    }
+
+    /// Drops AppKit's `NSWindow Frame <id>…` keys so a UI-test launch is not sized from a previous run.
+    static func clearSavedFrame(for sceneID: String) {
+        let defaults = UserDefaults.standard
+        let marker = "NSWindow Frame \(sceneID)"
+        for key in defaults.dictionaryRepresentation().keys where key == marker || key.hasPrefix("\(marker)-") {
+            defaults.removeObject(forKey: key)
+        }
     }
 }
 

@@ -132,17 +132,21 @@ public final class BrewInstalledPackagesRepository: InstalledPackagesRepository 
 
     // MARK: - Reconcile on mutating-operation completion
 
-    /// Reconciles after a mutating `brew` operation completes by forcing a fresh fetch. Uses the
-    /// existing command-center phase stream (running → idle) rather than a bespoke callback.
+    /// Reconciles when a mutating `brew` operation ends by forcing a fresh fetch, using the
+    /// existing command-center phase stream rather than a bespoke callback. Failure reconciles
+    /// too: a batch operation (`brew upgrade a b`) can fail overall yet still have changed the
+    /// inventory for the packages that succeeded. Read-only work (`brew doctor`) cannot change
+    /// the inventory, so its completion never triggers a refetch.
     private func observeOperationCompletions() async {
         var lastPhase: [BrewOperationID: BrewOperationPhase] = [:]
         let stream = await commandCenter.allPhaseChanges()
         for await (id, phase) in stream {
             let previous = lastPhase[id] ?? .idle
             lastPhase[id] = phase
-            if case .running = previous, case .idle = phase {
-                await load(forceRefresh: true)
+            guard case let .running(kind) = previous, kind.isMutating, !phase.isRunning else {
+                continue
             }
+            await load(forceRefresh: true)
         }
     }
 

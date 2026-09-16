@@ -418,7 +418,9 @@ struct BrewInstalledPackagesRepositoryTests {
         await expectCallCount(atLeast: 2, runner: runner)
     }
 
-    @Test @MainActor func `command center running to failed does not trigger a reconcile fetch`() async {
+    @Test @MainActor func `command center running to failed after a mutating operation triggers a reconcile fetch`() async {
+        // A batch operation can fail overall yet still change the inventory (partial success),
+        // so a failed mutating run reconciles exactly like a successful one.
         let commandCenter = ControllableAllPhasesCommandCenter()
         let runner = CountingInfoRunner()
         let repo = InstalledPackagesTestSupport.repository(commandRunner: runner, commandCenter: commandCenter)
@@ -428,6 +430,38 @@ struct BrewInstalledPackagesRepositoryTests {
 
         let opID = BrewOperationID(kind: .formula, name: "git")
         await commandCenter.emitPhase(id: opID, phase: .running(.upgradeFormula))
+        await commandCenter.emitPhase(id: opID, phase: .failed(reason: .brewExecutableNotFound))
+
+        await expectCallCount(atLeast: 2, runner: runner)
+    }
+
+    @Test @MainActor func `read-only command completion does not trigger a reconcile fetch`() async {
+        // `brew doctor` cannot change the inventory; its completion must not force a refetch.
+        let commandCenter = ControllableAllPhasesCommandCenter()
+        let runner = CountingInfoRunner()
+        let repo = InstalledPackagesTestSupport.repository(commandRunner: runner, commandCenter: commandCenter)
+        await repo.load(forceRefresh: true)
+        #expect(await runner.callCount == 1)
+        await waitForPhaseSubscriber(commandCenter: commandCenter)
+
+        let opID = BrewOperationID.maintenance(token: "doctor", displayCommand: "brew doctor")
+        await commandCenter.emitPhase(id: opID, phase: .running(.doctorRead))
+        await commandCenter.emitPhase(id: opID, phase: .idle)
+        await settleAsync()
+
+        #expect(await runner.callCount == 1)
+    }
+
+    @Test @MainActor func `read-only command failure does not trigger a reconcile fetch`() async {
+        let commandCenter = ControllableAllPhasesCommandCenter()
+        let runner = CountingInfoRunner()
+        let repo = InstalledPackagesTestSupport.repository(commandRunner: runner, commandCenter: commandCenter)
+        await repo.load(forceRefresh: true)
+        #expect(await runner.callCount == 1)
+        await waitForPhaseSubscriber(commandCenter: commandCenter)
+
+        let opID = BrewOperationID.maintenance(token: "doctor", displayCommand: "brew doctor")
+        await commandCenter.emitPhase(id: opID, phase: .running(.doctorRead))
         await commandCenter.emitPhase(id: opID, phase: .failed(reason: .brewExecutableNotFound))
         await settleAsync()
 

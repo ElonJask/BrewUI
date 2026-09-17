@@ -241,9 +241,9 @@ struct BrewApp: App {
     }
 
     var body: some Scene {
-        // One main window with a stable scene id so AppKit persists size and placement
-        // (`NSWindow Frame main`). `WindowGroup` would treat each launch as a new window
-        // and re-apply `.defaultSize` (issue #174).
+        // WindowGroup derived its autosave name from the view type, including modifier
+        // addresses that change every launch, so the saved frame never matched (issue #174).
+        // A Window with a stable id lets AppKit persist size and placement.
         Window("Homebrew", id: windowSceneID) {
             MainWindowView()
                 .environment(\.brewCommandCenter, commandCenter)
@@ -284,8 +284,6 @@ struct BrewApp: App {
             width: BrewLayout.defaultWindowWidth,
             height: BrewLayout.defaultWindowHeight,
         )
-        .defaultPosition(.center)
-        .windowResizability(.contentMinSize)
         .commands {
             SearchCommands()
             SidebarCommands()
@@ -307,7 +305,7 @@ struct BrewApp: App {
     }
 }
 
-/// Stable `Window` identity plus AppKit frame-autosave cleanup for UI tests.
+/// Scene id for the main window, plus UI-test cleanup of AppKit's saved frame.
 private enum MainWindowScene {
     static let productionID = "main"
     static let uiTestingID = "main-ui-testing"
